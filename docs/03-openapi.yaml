@@ -1,0 +1,229 @@
+openapi: 3.0.3
+info:
+  title: Currency Rate Service
+  version: 0.2.0
+  description: |
+    Read-only indicative conversions and daily CSV history.
+    Source and processing failures are logged to console.
+    Data errors never change /healthz. No metrics endpoint.
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/convert:
+    get:
+      operationId: convert
+      summary: Convert using the best fresh bank offer in one channel
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/City'
+        - $ref: '#/components/parameters/Channel'
+        - name: amount
+          in: query
+          required: true
+          description: Positive decimal amount, at most two fractional digits.
+          schema: {type: string, pattern: '^[0-9]+([.][0-9]{1,2})?$'}
+          example: '100.00'
+      responses:
+        '200':
+          description: Best offer and at most 10 alternatives, ranked before rounding
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, amount, bestOffer, alternatives, generatedAt]
+                properties:
+                  from: {$ref: '#/components/schemas/Currency'}
+                  to: {$ref: '#/components/schemas/Currency'}
+                  amount: {type: string}
+                  bestOffer: {$ref: '#/components/schemas/ConversionOffer'}
+                  alternatives:
+                    type: array
+                    maxItems: 10
+                    items: {$ref: '#/components/schemas/ConversionOffer'}
+                  generatedAt: {type: string, format: date-time}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/rates/best:
+    get:
+      operationId: bestRates
+      summary: List fresh bank offers by descending directional rate
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/City'
+        - $ref: '#/components/parameters/Channel'
+        - name: limit
+          in: query
+          schema: {type: integer, default: 10, minimum: 1, maximum: 50}
+      responses:
+        '200':
+          description: Empty offers array if there are no matching fresh bank records
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, city, channel, offers, generatedAt]
+                properties:
+                  from: {$ref: '#/components/schemas/Currency'}
+                  to: {$ref: '#/components/schemas/Currency'}
+                  city: {type: string, enum: [Moscow]}
+                  channel: {type: string, enum: [cash, card, account]}
+                  offers:
+                    type: array
+                    items: {$ref: '#/components/schemas/Offer'}
+                  generatedAt: {type: string, format: date-time}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /v1/rates/history:
+    get:
+      operationId: rateHistory
+      summary: Daily averages grouped by source, bank, kind, city, channel and pair
+      description: |
+        Dates inclusive, Europe/Moscow, completed days only, at most 31 days.
+        More than 10000 points returns 400 RANGE_TOO_LARGE.
+        Missing daily files return 404 HISTORY_NOT_READY with missingDates.
+        Header-only daily files contribute no points.
+        Sort by date, source, kind, bank, city and channel.
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: start
+          in: query
+          required: true
+          schema: {type: string, format: date}
+          example: '2026-09-01'
+        - name: end
+          in: query
+          required: true
+          schema: {type: string, format: date}
+          example: '2026-09-08'
+      responses:
+        '200':
+          description: Per-group daily averages; not a ranking of best daily offers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, points]
+                properties:
+                  from: {$ref: '#/components/schemas/Currency'}
+                  to: {$ref: '#/components/schemas/Currency'}
+                  points:
+                    type: array
+                    maxItems: 10000
+                    items: {$ref: '#/components/schemas/DailyPoint'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /healthz:
+    get:
+      operationId: health
+      summary: HTTP server liveness
+      description: Does not access sources or CSV. Independent of source failures.
+      responses:
+        '200':
+          description: HTTP server is running
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status: {type: string, enum: [ok]}
+              example: {status: ok}
+components:
+  parameters:
+    From:
+      name: from
+      in: query
+      required: true
+      description: Input currency; must differ from to.
+      schema: {$ref: '#/components/schemas/Currency'}
+      example: USD
+    To:
+      name: to
+      in: query
+      required: true
+      schema: {$ref: '#/components/schemas/Currency'}
+      example: RUB
+    City:
+      name: city
+      in: query
+      schema: {type: string, enum: [Moscow], default: Moscow}
+    Channel:
+      name: channel
+      in: query
+      required: true
+      schema: {type: string, enum: [cash, card, account]}
+  responses:
+    BadRequest:
+      description: INVALID_ARGUMENT or RANGE_TOO_LARGE
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: NO_FRESH_OFFERS or HISTORY_NOT_READY
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    InternalError:
+      description: INTERNAL_ERROR; processing details are logged to console only
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    Currency:
+      type: string
+      enum: [BYN, USD, EUR, RUB]
+    Offer:
+      type: object
+      required: [bank, city, channel, rate, observedAt, sourceAt, source, sourceUrl, disclaimer]
+      properties:
+        bank: {type: string}
+        city: {type: string, enum: [Moscow]}
+        channel: {type: string, enum: [cash, card, account]}
+        rate:
+          type: string
+          description: Units of to per one from; serialize to 12 fractional digits, half-even.
+          example: '80.000000000000'
+        observedAt: {type: string, format: date-time}
+        sourceAt: {type: string, format: date-time, nullable: true}
+        source: {type: string}
+        sourceUrl: {type: string, format: uri}
+        disclaimer: {type: string, example: 'Indicative rate; confirm availability and fees with the bank.'}
+    ConversionOffer:
+      allOf:
+        - $ref: '#/components/schemas/Offer'
+        - type: object
+          required: [estimatedReceive]
+          properties:
+            estimatedReceive:
+              type: string
+              description: amount times internal directional rate, half-even to two digits.
+              example: '8000.00'
+    DailyPoint:
+      type: object
+      required: [date, source, kind, bank, city, channel, averageRate, sampleCount, firstObservedAt, lastObservedAt]
+      properties:
+        date: {type: string, format: date}
+        source: {type: string}
+        kind: {type: string, enum: [bank, reference, market_reference]}
+        bank: {type: string}
+        city: {type: string, enum: [Moscow, unknown]}
+        channel: {type: string, enum: [cash, card, account, reference]}
+        averageRate: {type: string, example: '80.500000'}
+        sampleCount: {type: integer, minimum: 1}
+        firstObservedAt: {type: string, format: date-time}
+        lastObservedAt: {type: string, format: date-time}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, enum: [INVALID_ARGUMENT, RANGE_TOO_LARGE, NO_FRESH_OFFERS, HISTORY_NOT_READY, INTERNAL_ERROR]}
+        message: {type: string}
+        missingDates:
+          type: array
+          items: {type: string, format: date}
