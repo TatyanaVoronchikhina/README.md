@@ -8,40 +8,43 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func Result(amountStr, rateStr string) (string, error) {
-	amount, err := makeDigit(amountStr)
+// noFractionLimit — rate, в отличие от amount, не ограничен двумя знаками после точки.
+const noFractionLimit = -1
+
+func Convert(amountStr, rateStr string) (string, error) {
+	amount, err := parsePositiveDecimal(amountStr, 2)
 	if err != nil {
-		return "", fmt.Errorf("error by makeDigit: %w", err)
+		return "", fmt.Errorf("invalid amount: %w", err)
 	}
-	rate, err := makeDigit(rateStr)
+	rate, err := parsePositiveDecimal(rateStr, noFractionLimit)
 	if err != nil {
-		return "", fmt.Errorf("error by makeDigit: %w", err)
+		return "", fmt.Errorf("invalid rate: %w", err)
 	}
-	result := amount.Mul(rate).Round(2)
-	formattedResult := result.StringFixed(2)
-	return formattedResult, nil
+	// RoundBank — банковское округление half-even по постановке: 0.125 → 0.12, 0.135 → 0.14.
+	result := amount.Mul(rate).RoundBank(2)
+	return result.StringFixed(2), nil
 }
 
-func makeDigit(dataString string) (decimal.Decimal, error) {
-	dataString = strings.TrimSpace(dataString)
-	if dataString == "" {
+func parsePositiveDecimal(s string, maxFraction int) (decimal.Decimal, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return decimal.Decimal{}, errors.New("value is empty")
 	}
-	dataString = strings.ReplaceAll(dataString, ",", ".")
-	punctuation := strings.Count(dataString, ".")
-	if punctuation > 1 {
+	s = strings.ReplaceAll(s, ",", ".")
+	if strings.Count(s, ".") > 1 {
 		return decimal.Decimal{}, errors.New("too many punctuation marks")
 	}
-	dataArray := strings.Split(dataString, ".")
-	if len(dataArray) > 1 && len(dataArray[1]) > 2 {
-		return decimal.Decimal{}, errors.New("too many digits after the comma")
+	if maxFraction >= 0 {
+		if parts := strings.Split(s, "."); len(parts) > 1 && len(parts[1]) > maxFraction {
+			return decimal.Decimal{}, errors.New("too many digits after the comma")
+		}
 	}
-	decimalValue, err := decimal.NewFromString(dataString)
+	value, err := decimal.NewFromString(s)
 	if err != nil {
-		return decimal.Decimal{}, fmt.Errorf("value is invalid `%s`: %w", dataString, err)
+		return decimal.Decimal{}, fmt.Errorf("value is invalid `%s`: %w", s, err)
 	}
-	if decimalValue.LessThanOrEqual(decimal.Zero) {
+	if value.LessThanOrEqual(decimal.Zero) {
 		return decimal.Decimal{}, errors.New("value is less or equal zero")
 	}
-	return decimalValue, nil
+	return value, nil
 }
