@@ -8,6 +8,11 @@ import (
 	"os"
 )
 
+// git checkout main
+// git pull
+// git branch fitcher/t.voronchikhina/task-2-add-logger
+// git checkout fitcher/t.voronchikhina/task-2-add-logger
+
 func main() {
 	flag.Usage = func() {
 		fmt.Println("Верный формат ввода для конвертации: `calculate --amount 100 --rate 80`")
