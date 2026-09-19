@@ -70,4 +70,5 @@ func main() {
 		logger.With(slog.String("operation", "invalid")).Error("unknown command", otherErr.Error())
 		os.Exit(1)
 	}
+
 }
