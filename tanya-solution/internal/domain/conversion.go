@@ -14,12 +14,12 @@ const noFractionLimit = -1
 func Convert(amountStr, rateStr string, oplogger *slog.Logger) (string, error) {
 	oplogger.Debug("logger by debug", slog.String("amountStr", amountStr), slog.String("rateStr", rateStr))
 
-	amount, err := parsePositiveDecimal(amountStr, 2)
+	amount, err := ParsePositiveDecimal(amountStr, 2)
 	if err != nil {
 		return "", fmt.Errorf("invalid amount: %w", err)
 	}
 
-	rate, err := parsePositiveDecimal(rateStr, noFractionLimit)
+	rate, err := ParsePositiveDecimal(rateStr, noFractionLimit)
 	if err != nil {
 		return "", fmt.Errorf("invalid rate: %w", err)
 	}
@@ -28,7 +28,7 @@ func Convert(amountStr, rateStr string, oplogger *slog.Logger) (string, error) {
 	return result.StringFixed(2), nil
 }
 
-func parsePositiveDecimal(s string, maxFraction int) (decimal.Decimal, error) {
+func ParsePositiveDecimal(s string, maxFraction int) (decimal.Decimal, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return decimal.Decimal{}, errors.New("value is empty")
