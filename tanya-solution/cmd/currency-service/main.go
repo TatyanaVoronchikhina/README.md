@@ -1,119 +1,83 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
-	"moneychange/internal/archive"
-	"moneychange/internal/config"
-	"moneychange/internal/domain"
-	"moneychange/internal/importer"
-	"moneychange/internal/logging"
 	"os"
-	"time"
+	"strings"
+
+	"moneychange/internal/config"
+	"moneychange/internal/logging"
+	"moneychange/internal/source"
 )
 
-// git checkout main
-// git pull
-// git branch fitcher/t.voronchikhina/task-2-add-logger
-// git checkout fitcher/t.voronchikhina/task-2-add-logger
-
 func main() {
-	level := os.Getenv("LOG_LEVEL")
-	if level == "" {
-		level = "INFO"
-	}
-	slogLvl, err := logging.SlogLvl(level)
+	os.Exit(run(os.Args[1:]))
+}
+
+func run(args []string) int {
+	cfg, err := config.Load()
+	log := logging.New(cfg.LogLevel)
 	if err != nil {
-		accidentLogger := logging.New(slogLvl)
-		accidentLogger.Error("invalid logLevel ", "level", level, "error", err)
-		os.Exit(1)
+		log.Error("invalid configuration", "operation", "startup", "error", err.Error())
+		return 1
 	}
-	baseLogger := logging.New(slogLvl)
-	logger := baseLogger.With(slog.String("service", "currency-service"))
+	if len(args) == 0 {
+		usage(os.Stderr)
+		log.Error("command is required", "operation", "startup")
+		return 1
+	}
 
-	flag.Usage = func() {
-		fmt.Fprintln(os.Stdout, "Верный формат ввода для конвертации: `calculate --amount 100 --rate 80`")
-		fmt.Fprintln(os.Stdout, "Для получения информации из сети или файла: `import [--input ./path/to/file.xml]")
-	}
-	if len(os.Args) < 2 {
-		flag.Usage()
-		errByLenArgs := errors.New("not enough data")
-		fmt.Fprintln(os.Stderr, "CLI-command error", errByLenArgs)
-		os.Exit(1)
-	}
-	switch os.Args[1] {
+	switch args[0] {
 	case "calculate":
-		opLogger := logger.With(slog.String("operation", "calculate"))
-		startTime := time.Now()
-		calcFlag := flag.NewFlagSet("calculate", flag.ContinueOnError)
-		amount := calcFlag.String("amount", "", "amount to calculate")
-		rate := calcFlag.String("rate", "", "rate to calculate")
-		if err := calcFlag.Parse(os.Args[2:]); err != nil {
-			duration := time.Since(startTime).Milliseconds()
-			opLogger.Error("calculate parsing error", "error", err.Error(), "duration_ms", duration, "source", "CLI-command")
-			os.Exit(1)
-		}
-
-		result, err := domain.Convert(*amount, *rate, opLogger)
-		duration := time.Since(startTime).Milliseconds()
-		if err != nil {
-			opLogger.Error("convertation error", "error", err.Error(), "duration_ms", duration, "source", "CLI-command")
-			os.Exit(1)
-		}
-		opLogger.Info("calculation successfull", "records", 1, "duration_ms", duration, "source", "CLI-command")
-
-		fmt.Println(result)
-
+		return runCalculate(args[1:], log.With(slog.String("operation", "calculate")))
 	case "import":
-		opLogger := logger.With(slog.String("operation", "import"))
-		startTime := time.Now()
-		importFlag := flag.NewFlagSet("import", flag.ContinueOnError)
-		inputFile := importFlag.String("input", "", "path to input file")
-		if err := importFlag.Parse(os.Args[2:]); err != nil {
-			duration := time.Since(startTime).Milliseconds()
-			opLogger.Error("import parsing error", "error", err.Error(), "duration_ms", duration, "source", "CLI-command")
-			os.Exit(1)
-		}
-		inputMode := *inputFile != ""
-		cnfg, err := config.MakeDataDir(inputMode)
-		if err != nil {
-			duration := time.Since(startTime).Milliseconds()
-			opLogger.Error("configuration creation error", "error", err.Error(), "duration_ms", duration, "source", "CLI-command")
-			os.Exit(1)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-		defer cancel()
-
-		sourceName := "cbr"
-		if inputMode {
-			sourceName = "demo-cbr"
-		}
-		records, err := importer.Run(ctx, *inputFile, sourceName)
-		if err != nil {
-			duration := time.Since(startTime).Milliseconds()
-			opLogger.Error("import error", "error", err.Error(), "duration_ms", duration, "source", "CLI-command")
-			os.Exit(1)
-		}
-		if err := archive.SaveSnapshot(*cnfg, sourceName, records); err != nil {
-			duration := time.Since(startTime).Milliseconds()
-			opLogger.Error("save snapshot error", "error", err.Error(), "duration_ms", duration, "source", "CLI-command")
-			os.Exit(1)
-		}
-
-		duration := time.Since(startTime).Milliseconds()
-		opLogger.Info("calculation successfull", "records", len(records), "duration_ms", duration, "source", "CLI-command")
-
-	case "--help", "-h", "help":
-		flag.Usage()
-
+		return runImport(args[1:], cfg, log.With(slog.String("operation", "import")))
+	case "convert":
+		return runConvert(args[1:], cfg, log.With(slog.String("operation", "convert")))
+	case "help", "-h", "--help":
+		usage(os.Stdout)
+		return 0
 	default:
-		otherErr := errors.New("unknown command " + os.Args[1])
-		logger.With(slog.String("operation", "invalid")).Error("unknown command", otherErr.Error())
-		os.Exit(1)
+		usage(os.Stderr)
+		log.Error("unknown command", "operation", "startup", "command", args[0])
+		return 1
 	}
+}
 
+func usage(w io.Writer) {
+	fmt.Fprintf(w, `Использование: currency-service <команда> [флаги]
+
+Команды:
+  calculate --amount 100 --rate 80
+      Сумма по заданному курсу: 8000.00
+  import [--input ./cbr_daily.xml]
+      Импорт источников из SOURCES (доступны: %s).
+      --input разбирает сохранённый ответ ЦБ XML как demo-cbr; требует DATA_DIR=./data-demo.
+  convert --from USD --to RUB --amount 100 --channel cash [--city Moscow] [--bank "Demo Bank B"]
+      Лучшее свежее банковское предложение и сумма к получению.
+
+Окружение: DATA_DIR (./data), SOURCES (cbr-xml), MAX_RATE_AGE (30m), LOG_LEVEL (INFO), EXTRA_CA_FILE.
+`, strings.Join(source.IDs(), ", "))
+}
+
+// parseFlags: --help → (false, 0), ошибка → (false, 1).
+func parseFlags(fs *flag.FlagSet, args []string, log *slog.Logger) (ok bool, code int) {
+	fs.SetOutput(os.Stderr)
+	err := fs.Parse(args)
+	switch {
+	case err == nil && fs.NArg() > 0:
+		log.Error("unexpected arguments", "error", fmt.Sprint(fs.Args()))
+		return false, 1
+	case err == nil:
+		return true, 0
+	case errors.Is(err, flag.ErrHelp):
+		return false, 0
+	default:
+		log.Error("invalid flags", "error", err.Error())
+		return false, 1
+	}
 }
