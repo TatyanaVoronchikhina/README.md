@@ -23,7 +23,7 @@ func SlogLvl(str string) (slog.Level, error) {
 }
 
 func New(slogLevel slog.Level) *slog.Logger {
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{ //почему в терминал, удобнее же в отдельный файл?
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slogLevel,
 	})
 	return slog.New(handler)
