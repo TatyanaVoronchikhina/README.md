@@ -1,2 +1,7 @@
 .idea
 .DS_Store
+
+# Данные и сборка сервиса
+data/
+data-demo/
+tanya-solution/currency-service

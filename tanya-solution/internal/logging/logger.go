@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func SlogLvl(str string) (slog.Level, error) {
+func ParseLevel(str string) (slog.Level, error) {
 	switch strings.TrimSpace(strings.ToUpper(str)) {
 	case "DEBUG":
 		return slog.LevelDebug, nil
@@ -18,13 +18,13 @@ func SlogLvl(str string) (slog.Level, error) {
 	case "ERROR":
 		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo, fmt.Errorf(str + " is not a valid loglevel")
+		return slog.LevelInfo, fmt.Errorf("%q is not a valid log level", str)
 	}
 }
 
-func New(slogLevel slog.Level) *slog.Logger {
+func New(level slog.Level) *slog.Logger {
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slogLevel,
+		Level: level,
 	})
-	return slog.New(handler)
+	return slog.New(handler).With(slog.String("service", "currency-service"))
 }
